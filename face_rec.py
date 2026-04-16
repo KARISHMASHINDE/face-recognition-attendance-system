@@ -10,7 +10,7 @@ from datetime import datetime
 # MODEL LOAD
 # ------------------------------
 faceapp = FaceAnalysis(name='buffalo_sc', root='insightface_model')
-faceapp.prepare(ctx_id=-1, det_size=(640,640))
+faceapp.prepare(ctx_id=-1, det_size=(640, 640))
 
 
 # ------------------------------
@@ -43,7 +43,7 @@ def retrive_data(db_name):
             if feature.shape[0] > 0:
                 data.append([name, emp_id, feature])
 
-    return pd.DataFrame(data, columns=['Name','EmployeeID','facial_features'])
+    return pd.DataFrame(data, columns=['Name', 'EmployeeID', 'facial_features'])
 
 
 # ------------------------------
@@ -59,7 +59,7 @@ def ml_search_algorithm(df, col, test_vec, roles, thresh):
     except:
         return 'Unknown', 'Unknown'
 
-    sim = pairwise.cosine_similarity(X, test_vec.reshape(1,-1)).flatten()
+    sim = pairwise.cosine_similarity(X, test_vec.reshape(1, -1)).flatten()
 
     if np.max(sim) >= thresh:
         idx = np.argmax(sim)
@@ -70,30 +70,24 @@ def ml_search_algorithm(df, col, test_vec, roles, thresh):
 
 
 # ------------------------------
-# REALTIME CLASS
+# REALTIME CLASS (FIXED)
 # ------------------------------
 class RealTimePred:
 
     def __init__(self, db_name):
         self.db_name = db_name
 
-        # CONFIG
-        self.min_out_gap = 30   # seconds (no OUT immediately after IN)
-        self.min_repeat_gap = 5 # seconds (avoid rapid duplicate detection)
+        # controls
+        self.min_repeat_gap = 5     # avoid frame spam
+        self.min_out_gap = 60       # allow OUT only after IN delay
 
+        # tracking
         self.last_seen_time = {}
 
-        # 🔥 CRITICAL LOCK (prevents multiple logs)
-        self.event_locked = False
-
-
     # ------------------------------
-    # PREVENT FAST FRAME SPAM
+    # PREVENT FRAME SPAM
     # ------------------------------
     def can_process(self, emp_id):
-
-        if self.event_locked:
-            return False
 
         now = datetime.now()
         last = self.last_seen_time.get(emp_id)
@@ -108,9 +102,8 @@ class RealTimePred:
 
         return False
 
-
     # ------------------------------
-    # SAVE LOG (DB CONTROLLED)
+    # SAVE LOGIC (IN / OUT / DONE)
     # ------------------------------
     def saveLogs_mysql(self, name, emp_id, time_str):
 
@@ -123,15 +116,17 @@ class RealTimePred:
 
         cursor = conn.cursor()
 
-        # Get last log
+        # Get last entry
         cursor.execute("""
             SELECT log_type, attendance_time
             FROM employee_daily_attendance
             WHERE employee_id=%s AND attendance_date=CURDATE()
             ORDER BY attendance_time DESC LIMIT 1
         """, (emp_id,))
+
         result = cursor.fetchone()
 
+        # FIRST TIME → IN
         if result is None:
             log_type = "IN"
 
@@ -143,12 +138,14 @@ class RealTimePred:
 
             diff = (datetime.now() - last_time).total_seconds()
 
-            # 🚫 prevent immediate OUT
+            # IN → OUT
             if last_type == "IN":
                 if diff < self.min_out_gap:
                     conn.close()
                     return None
                 log_type = "OUT"
+
+            # OUT → DONE
             else:
                 conn.close()
                 return name, "DONE"
@@ -158,20 +155,16 @@ class RealTimePred:
         cursor.execute("""
             INSERT INTO employee_daily_attendance
             (employee_id, employee_name, attendance_time, attendance_date, log_type)
-            VALUES (%s,%s,%s,CURDATE(),%s)
+            VALUES (%s, %s, %s, CURDATE(), %s)
         """, (emp_id, name, time_str, log_type))
 
         conn.commit()
         conn.close()
 
-        # 🔥 LOCK after successful log
-        self.event_locked = True
-
         return name, log_type
 
-
     # ------------------------------
-    # MAIN PREDICTION
+    # FACE PREDICTION
     # ------------------------------
     def face_prediction(self, img, df, col, roles, thresh):
 
@@ -201,10 +194,10 @@ class RealTimePred:
                     if result:
                         event = result
 
-            color = (0,255,0) if name != "Unknown" else (0,0,255)
+            color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
 
-            cv2.rectangle(img,(bbox[0],bbox[1]),(bbox[2],bbox[3]),color,2)
-            cv2.putText(img, name, (bbox[0],bbox[1]-10),
-                        cv2.FONT_HERSHEY_SIMPLEX,0.7,color,2)
+            cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
+            cv2.putText(img, name, (bbox[0], bbox[1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         return img, detected, event
