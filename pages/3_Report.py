@@ -1,7 +1,6 @@
 import streamlit as st
-from Home import face_rec
 import pandas as pd
-from redis import Redis, RedisError
+import mysql.connector
 
 # ==============================================
 # PAGE CONFIGURATION
@@ -10,107 +9,176 @@ st.set_page_config(page_title='Reporting', layout='wide')
 st.subheader('Reporting')
 
 # ==============================================
-# CONSTANTS & INITIALIZATION
+# MYSQL CONNECTION
 # ==============================================
-REDIS_LOG_KEY = 'attendance:logs'
-redis_conn = face_rec.get_redis_connection()
+from db_connection import get_mysql_connection
+
 
 # ==============================================
 # DATA LOADING FUNCTIONS
 # ==============================================
-def load_logs(log_key: str, end: int = -1) -> list:
-    """
-    Retrieve attendance logs from Redis
-    
-    Args:
-        log_key: Redis key for logs
-        end: Index of last item to retrieve (-1 for all)
-    
-    Returns:
-        List of log entries or empty list on error
-    """
-    try:
-        logs_list = redis_conn.lrange(log_key, start=0, end=end)
-        return logs_list if logs_list else []
-    except RedisError as e:
-        st.error(f"Redis connection error: {e}")
-        return []
-    except Exception as e:
-        st.error(f"Unexpected error loading logs: {e}")
-        return []
+def load_attendance_logs():
 
-def process_attendance_logs(logs: list) -> pd.DataFrame:
-    """
-    Process raw log data into formatted attendance report
-    
-    Args:
-        logs: List of raw log entries from Redis
-    
-    Returns:
-        DataFrame with processed attendance data
-    """
-    if not logs:
-        return pd.DataFrame()
-    
-    # Convert and clean log data
-    logs_decoded = [log.decode('utf-8') for log in logs]
-    logs_split = [log.split('@') for log in logs_decoded if len(log.split('@')) == 3]
-    
-    if not logs_split:
-        return pd.DataFrame()
-    
-    # Create DataFrame and process timestamps
-    df = pd.DataFrame(logs_split, columns=['Name', 'Role', 'Timestamp'])
-    df = df.apply(lambda x: x.str.strip())
-    df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
-    df = df.dropna(subset=['Timestamp'])
-    df['Date'] = df['Timestamp'].dt.date
-    
-    # Generate attendance statistics
-    report = df.groupby(['Date', 'Name', 'Role']).agg(
-        Check_In=('Timestamp', 'min'),
-        Check_Out=('Timestamp', 'max')
-    ).reset_index()
-    
-    # Format time duration
-    report['Duration'] = report['Check_Out'] - report['Check_In']
-    report['Duration'] = report['Duration'].apply(_format_timedelta)
-    
-    return report
+    conn = get_mysql_connection()
+    cursor = conn.cursor()
 
-def _format_timedelta(td: pd.Timedelta) -> str:
-    """Helper to format timedelta as human-readable string"""
-    days = td.days
-    hours, remainder = divmod(td.seconds, 3600)
-    minutes = remainder // 60
-    return f"{days}d {hours}h {minutes}m" if days else f"{hours}h {minutes}m"
+    cursor.execute("""
+        SELECT employee_name, employee_id, attendance_time, attendance_date, log_type
+        FROM employee_daily_attendance
+        ORDER BY attendance_time DESC
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    df = pd.DataFrame(rows, columns=[
+        'Name','EmployeeID','Timestamp','Date','log_type'
+    ])
+
+    return df
+
+
+def load_registered_users():
+
+    conn = get_mysql_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT employee_name, employee_id
+        FROM employee_face_data
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    df = pd.DataFrame(rows, columns=['Name','EmployeeID'])
+
+    return df
+
 
 # ==============================================
-# PAGE LAYOUT - TABBED INTERFACE
+# PAGE LAYOUT
 # ==============================================
-tab1, tab2, tab3 = st.tabs(['Registered Users', 'Raw Logs', 'Attendance Report'])
+tab1, tab2, tab3, tab4 = st.tabs([
+    'Registered Users',
+    'Raw Logs',
+    'Attendance Report',
+    'Monthly Report'
+])
 
+# ==============================================
+# TAB 1 - REGISTERED USERS
+# ==============================================
 with tab1:
+
     st.subheader('Registered Users')
-    if st.button('Refresh User Data', key='refresh_users'):
+
+    if st.button('Refresh User Data'):
+
         with st.spinner('Loading user data...'):
-            user_data = face_rec.retrive_data(name='academy:register')
-            st.dataframe(user_data[['Name', 'Role']])
+            user_data = load_registered_users()
+            st.dataframe(user_data)
 
+
+# ==============================================
+# TAB 2 - RAW ATTENDANCE LOGS
+# ==============================================
 with tab2:
-    st.subheader('Raw Attendance Logs')
-    if st.button('Refresh Log Data', key='refresh_logs'):
-        raw_logs = load_logs(REDIS_LOG_KEY)
-        st.write(raw_logs)
 
+    st.subheader('Raw Attendance Logs')
+
+    if st.button('Refresh Log Data'):
+
+        logs = load_attendance_logs()
+        st.dataframe(logs)
+
+
+# ==============================================
+# TAB 3 - ATTENDANCE REPORT
+# ==============================================
 with tab3:
+
     st.subheader('Processed Attendance Report')
-    
-    # Load and process attendance data
-    attendance_logs = load_logs(REDIS_LOG_KEY)
-    attendance_report = process_attendance_logs(attendance_logs)
-    
-    if attendance_report.empty:
-        st.warning("No valid attendance data found")
+
+    logs = load_attendance_logs()
+
+    if logs.empty:
+        st.warning("No attendance data found")
+
     else:
-        st.dataframe(attendance_report)
+        logs['Timestamp'] = pd.to_datetime(logs['Timestamp'])
+        logs['Date'] = logs['Timestamp'].dt.date
+
+        report_data = []
+
+        for (date, name, emp), group in logs.groupby(['Date','Name','EmployeeID']):
+
+            group = group.sort_values('Timestamp')
+
+            check_in = group[group['log_type'] == 'IN']['Timestamp'].min()
+            check_out = group[group['log_type'] == 'OUT']['Timestamp'].max()
+
+            working_hours = 0
+            status = "Absent"
+
+            if pd.notna(check_in) and pd.notna(check_out):
+
+                duration = (check_out - check_in).total_seconds() / 3600
+
+                # ✅ Deduct 1 hour lunch
+                duration = max(0, duration - 1)
+
+                working_hours = round(duration, 2)
+
+                # ✅ Status Logic
+                if working_hours >= 8:
+                    status = "Full Day"
+                elif working_hours >= 4:
+                    status = "Half Day"
+                else:
+                    status = "Absent"
+
+            report_data.append([
+                date, name, emp, check_in, check_out, working_hours, status
+            ])
+
+        report = pd.DataFrame(report_data, columns=[
+            'Date','Name','EmployeeID','Check_In','Check_Out','Working_Hours','Status'
+        ])
+
+        st.dataframe(report)
+
+        # ✅ Download Option
+        st.download_button(
+            "⬇️ Download Report",
+            report.to_csv(index=False),
+            file_name="daily_attendance.csv"
+        )
+        
+# ==============================================
+# TAB 4 - MONTHLY REPORT
+with tab4:
+
+    st.subheader('Monthly Attendance Summary')
+
+    logs = load_attendance_logs()
+
+    if logs.empty:
+        st.warning("No attendance data found")
+
+    else:
+        logs['Timestamp'] = pd.to_datetime(logs['Timestamp'])
+        logs['Month'] = logs['Timestamp'].dt.to_period('M')
+
+        monthly_report = logs.groupby(['Month','Name','EmployeeID'])['log_type'].apply(
+            lambda x: (x=='IN').sum()
+        ).reset_index(name='Days_Present')
+
+        st.dataframe(monthly_report)
+
+        # ✅ Download Option
+        st.download_button(
+            "⬇️ Download Monthly Report",
+            monthly_report.to_csv(index=False),
+            file_name="monthly_attendance_summary.csv"
+        )
