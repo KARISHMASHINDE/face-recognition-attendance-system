@@ -168,15 +168,69 @@ with tab4:
 
     else:
         logs['Timestamp'] = pd.to_datetime(logs['Timestamp'])
-        logs['Month'] = logs['Timestamp'].dt.to_period('M')
+        logs['Date'] = logs['Timestamp'].dt.date
 
-        monthly_report = logs.groupby(['Month','Name','EmployeeID'])['log_type'].apply(
-            lambda x: (x=='IN').sum()
-        ).reset_index(name='Days_Present')
+        report_data = []
+
+        # ------------------------------
+        # STEP 1: DAILY CALCULATION
+        # ------------------------------
+        for (date, name, emp), group in logs.groupby(['Date','Name','EmployeeID']):
+
+            group = group.sort_values('Timestamp')
+
+            check_in = group[group['log_type'] == 'IN']['Timestamp'].min()
+            check_out = group[group['log_type'] == 'OUT']['Timestamp'].max()
+
+            working_hours = 0
+            status = "Absent"
+
+            if pd.notna(check_in) and pd.notna(check_out):
+
+                duration = (check_out - check_in).total_seconds() / 3600
+                duration = max(0, duration - 1)  # lunch deduction
+                working_hours = round(duration, 2)
+
+                if working_hours >= 7.5:
+                    status = "Full Day"
+                elif working_hours >= 3.5:
+                    status = "Half Day"
+                else:
+                    status = "Absent"
+
+            report_data.append([date, name, emp, status])
+
+        report = pd.DataFrame(report_data, columns=[
+            'Date','Name','EmployeeID','Status'
+        ])
+
+        # ------------------------------
+        # STEP 2: CONVERT TO NUMERIC VALUE
+        # ------------------------------
+        def status_to_value(x):
+            if x == "Full Day":
+                return 1
+            elif x == "Half Day":
+                return 0.5
+            else:
+                return 0
+
+        report['Value'] = report['Status'].apply(status_to_value)
+
+        # ------------------------------
+        # STEP 3: MONTHLY SUMMARY
+        # ------------------------------
+        report['Month'] = pd.to_datetime(report['Date']).dt.to_period('M')
+
+        monthly_report = report.groupby(
+            ['Month','Name','EmployeeID']
+        )['Value'].sum().reset_index(name='Total_Days')
 
         st.dataframe(monthly_report)
 
-        # ✅ Download Option
+        # ------------------------------
+        # DOWNLOAD
+        # ------------------------------
         st.download_button(
             "⬇️ Download Monthly Report",
             monthly_report.to_csv(index=False),
