@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import mysql.connector
+from datetime import datetime
 
 # ==============================================
 # PAGE CONFIG
@@ -70,10 +71,14 @@ col1, col2, col3, col4 = st.columns(4)
 min_date = logs['Date'].min()
 max_date = logs['Date'].max()
 
+# ✅ NEW: first day of current month
+today = datetime.today()
+first_day_of_month = today.replace(day=1).date()
+
 with col1:
     from_date = st.date_input(
         "From Date",
-        value=min_date,
+        value=first_day_of_month,   # ✅ CHANGED HERE
         key="from_date"
     )
 
