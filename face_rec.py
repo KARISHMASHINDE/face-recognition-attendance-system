@@ -5,6 +5,7 @@ import mysql.connector
 from insightface.app import FaceAnalysis
 from sklearn.metrics import pairwise
 from datetime import datetime
+import time
 
 # ------------------------------
 # MODEL LOAD
@@ -70,22 +71,22 @@ def ml_search_algorithm(df, col, test_vec, roles, thresh):
 
 
 # ------------------------------
-# REALTIME CLASS (FIXED)
+# REALTIME CLASS
 # ------------------------------
 class RealTimePred:
 
     def __init__(self, db_name):
         self.db_name = db_name
 
-        # controls
-        self.min_repeat_gap = 5     # avoid frame spam
-        self.min_out_gap = 60       # allow OUT only after IN delay
+        self.min_repeat_gap = 5
+        self.min_out_gap = 60
 
-        # tracking
         self.last_seen_time = {}
 
-    # ------------------------------
-    # PREVENT FRAME SPAM
+        # ✅ BLINK STATE
+        self.blink_counter = {}
+        self.blink_verified = {}
+
     # ------------------------------
     def can_process(self, emp_id):
 
@@ -103,7 +104,38 @@ class RealTimePred:
         return False
 
     # ------------------------------
-    # SAVE LOGIC (IN / OUT / DONE)
+    # ✅ FIXED BLINK LOGIC (WORKING)
+    # ------------------------------
+    def is_blinking(self, emp_id, landmarks):
+
+        if landmarks is None or len(landmarks) < 2:
+            return False
+
+        left_eye = landmarks[0]
+        right_eye = landmarks[1]
+
+        # Horizontal distance
+        eye_distance = abs(left_eye[0] - right_eye[0])
+
+        # Vertical difference
+        eye_height = abs(left_eye[1] - right_eye[1])
+
+        ratio = eye_height / (eye_distance + 1e-6)
+
+        if emp_id not in self.blink_counter:
+            self.blink_counter[emp_id] = 0
+
+        # Blink condition
+        if ratio < 0.15:
+            self.blink_counter[emp_id] += 1
+        else:
+            if self.blink_counter[emp_id] >= 2:
+                self.blink_counter[emp_id] = 0
+                return True
+            self.blink_counter[emp_id] = 0
+
+        return False
+
     # ------------------------------
     def saveLogs_mysql(self, name, emp_id, time_str):
 
@@ -116,7 +148,6 @@ class RealTimePred:
 
         cursor = conn.cursor()
 
-        # Get last entry
         cursor.execute("""
             SELECT log_type, attendance_time
             FROM employee_daily_attendance
@@ -126,7 +157,6 @@ class RealTimePred:
 
         result = cursor.fetchone()
 
-        # FIRST TIME → IN
         if result is None:
             log_type = "IN"
 
@@ -138,19 +168,14 @@ class RealTimePred:
 
             diff = (datetime.now() - last_time).total_seconds()
 
-            # IN → OUT
             if last_type == "IN":
                 if diff < self.min_out_gap:
                     conn.close()
                     return None
                 log_type = "OUT"
-
-            # OUT → DONE
             else:
                 conn.close()
                 return name, "DONE"
-
-        print(f"[DB SAVE] {name} | {emp_id} | {log_type}")
 
         cursor.execute("""
             INSERT INTO employee_daily_attendance
@@ -164,8 +189,6 @@ class RealTimePred:
         return name, log_type
 
     # ------------------------------
-    # FACE PREDICTION
-    # ------------------------------
     def face_prediction(self, img, df, col, roles, thresh):
 
         now = datetime.now()
@@ -176,28 +199,55 @@ class RealTimePred:
         detected = False
         event = None
 
+        # ❗ MULTIPLE FACE BLOCK
+        if len(results) > 1:
+            cv2.putText(img, "Only one person allowed", (50, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 3)
+            return img, False, None
+
         for r in results:
 
             detected = True
 
             bbox = r.bbox.astype(int)
             emb = r.embedding
+            landmarks = r.kps
 
             name, emp_id = ml_search_algorithm(df, col, emb, roles, thresh)
 
             if name != "Unknown":
 
-                if self.can_process(emp_id):
+                blink = self.is_blinking(emp_id, landmarks)
 
-                    result = self.saveLogs_mysql(name, emp_id, time_str)
+                # ✅ STORE BLINK TIME
+                if blink:
+                    self.blink_verified[emp_id] = time.time()
 
-                    if result:
-                        event = result
+                # ✅ ALLOW ACTION FOR 3 SECONDS
+                allow_action = False
+                if emp_id in self.blink_verified:
+                    if time.time() - self.blink_verified[emp_id] <= 3:
+                        allow_action = True
 
-            color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+                if allow_action:
+                    cv2.putText(img, "Blink Verified", (bbox[0], bbox[1]-40),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
 
-            cv2.rectangle(img, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
-            cv2.putText(img, name, (bbox[0], bbox[1] - 10),
+                    if self.can_process(emp_id):
+                        result = self.saveLogs_mysql(name, emp_id, time_str)
+                        if result:
+                            event = result
+
+                else:
+                    cv2.putText(img, "Please Blink", (bbox[0], bbox[1]-40),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+
+            color = (0,255,0) if name!="Unknown" else (0,0,255)
+
+            cv2.rectangle(img, (bbox[0], bbox[1]),
+                          (bbox[2], bbox[3]), color, 2)
+
+            cv2.putText(img, name, (bbox[0], bbox[1]-10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         return img, detected, event
