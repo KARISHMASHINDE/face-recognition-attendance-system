@@ -3,19 +3,16 @@ import pandas as pd
 import mysql.connector
 
 # ==============================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # ==============================================
 st.set_page_config(page_title='Reporting', layout='wide')
 st.subheader('Reporting')
 
-# ==============================================
-# MYSQL CONNECTION
-# ==============================================
 from db_connection import get_mysql_connection
 
 
 # ==============================================
-# DATA LOADING FUNCTIONS
+# LOAD DATA
 # ==============================================
 def load_attendance_logs():
 
@@ -35,6 +32,9 @@ def load_attendance_logs():
         'Name','EmployeeID','Timestamp','Date','log_type'
     ])
 
+    df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+    df['Date'] = df['Timestamp'].dt.date
+
     return df
 
 
@@ -51,13 +51,72 @@ def load_registered_users():
     rows = cursor.fetchall()
     conn.close()
 
-    df = pd.DataFrame(rows, columns=['Name','EmployeeID'])
-
-    return df
+    return pd.DataFrame(rows, columns=['Name','EmployeeID'])
 
 
 # ==============================================
-# PAGE LAYOUT
+# BASE DATA
+# ==============================================
+logs = load_attendance_logs()
+
+
+# ==============================================
+# 🔎 FILTERS (FRONT UI)
+# ==============================================
+st.markdown("### 🔎 Filters")
+
+col1, col2, col3, col4 = st.columns(4)
+
+min_date = logs['Date'].min()
+max_date = logs['Date'].max()
+
+with col1:
+    from_date = st.date_input(
+        "From Date",
+        value=min_date,
+        key="from_date"
+    )
+
+with col2:
+    to_date = st.date_input(
+        "To Date",
+        value=max_date,
+        key="to_date"
+    )
+
+with col3:
+    name_list = ["All"] + sorted(logs['Name'].dropna().unique().tolist())
+    selected_name = st.selectbox("Employee Name", name_list)
+
+with col4:
+    emp_list = ["All"] + sorted(logs['EmployeeID'].dropna().astype(str).unique().tolist())
+    selected_emp = st.selectbox("Employee ID", emp_list)
+
+
+# ==============================================
+# APPLY FILTERS
+# ==============================================
+filtered_logs = logs.copy()
+
+# Date filter
+filtered_logs = filtered_logs[
+    (filtered_logs['Date'] >= from_date) &
+    (filtered_logs['Date'] <= to_date)
+]
+
+# Name filter
+if selected_name != "All":
+    filtered_logs = filtered_logs[filtered_logs['Name'] == selected_name]
+
+# Employee filter
+if selected_emp != "All":
+    filtered_logs = filtered_logs[
+        filtered_logs['EmployeeID'].astype(str) == selected_emp
+    ]
+
+
+# ==============================================
+# TABS
 # ==============================================
 tab1, tab2, tab3, tab4 = st.tabs([
     'Registered Users',
@@ -66,52 +125,40 @@ tab1, tab2, tab3, tab4 = st.tabs([
     'Monthly Report'
 ])
 
+
 # ==============================================
-# TAB 1 - REGISTERED USERS
+# TAB 1 - USERS
 # ==============================================
 with tab1:
-
     st.subheader('Registered Users')
 
     if st.button('Refresh User Data'):
-
-        with st.spinner('Loading user data...'):
-            user_data = load_registered_users()
-            st.dataframe(user_data)
+        st.dataframe(load_registered_users())
 
 
 # ==============================================
-# TAB 2 - RAW ATTENDANCE LOGS
+# TAB 2 - RAW LOGS
 # ==============================================
 with tab2:
-
     st.subheader('Raw Attendance Logs')
-
-    if st.button('Refresh Log Data'):
-
-        logs = load_attendance_logs()
-        st.dataframe(logs)
+    st.dataframe(filtered_logs)
 
 
 # ==============================================
-# TAB 3 - ATTENDANCE REPORT
+# TAB 3 - DAILY REPORT
 # ==============================================
 with tab3:
 
     st.subheader('Processed Attendance Report')
 
-    logs = load_attendance_logs()
-
-    if logs.empty:
+    if filtered_logs.empty:
         st.warning("No attendance data found")
 
     else:
-        logs['Timestamp'] = pd.to_datetime(logs['Timestamp'])
-        logs['Date'] = logs['Timestamp'].dt.date
 
         report_data = []
 
-        for (date, name, emp), group in logs.groupby(['Date','Name','EmployeeID']):
+        for (date, name, emp), group in filtered_logs.groupby(['Date','Name','EmployeeID']):
 
             group = group.sort_values('Timestamp')
 
@@ -124,13 +171,10 @@ with tab3:
             if pd.notna(check_in) and pd.notna(check_out):
 
                 duration = (check_out - check_in).total_seconds() / 3600
-
-                # ✅ Deduct 1 hour lunch
                 duration = max(0, duration - 1)
 
                 working_hours = round(duration, 2)
 
-                # ✅ Status Logic
                 if working_hours >= 8:
                     status = "Full Day"
                 elif working_hours >= 4:
@@ -148,52 +192,44 @@ with tab3:
 
         st.dataframe(report)
 
-        # ✅ Download Option
         st.download_button(
             "⬇️ Download Report",
             report.to_csv(index=False),
             file_name="daily_attendance.csv"
         )
-        
+
+
 # ==============================================
 # TAB 4 - MONTHLY REPORT
+# ==============================================
 with tab4:
 
     st.subheader('Monthly Attendance Summary')
 
-    logs = load_attendance_logs()
-
-    if logs.empty:
+    if filtered_logs.empty:
         st.warning("No attendance data found")
 
     else:
-        logs['Timestamp'] = pd.to_datetime(logs['Timestamp'])
-        logs['Date'] = logs['Timestamp'].dt.date
 
         report_data = []
 
-        # ------------------------------
-        # STEP 1: DAILY CALCULATION
-        # ------------------------------
-        for (date, name, emp), group in logs.groupby(['Date','Name','EmployeeID']):
+        for (date, name, emp), group in filtered_logs.groupby(['Date','Name','EmployeeID']):
 
             group = group.sort_values('Timestamp')
 
             check_in = group[group['log_type'] == 'IN']['Timestamp'].min()
             check_out = group[group['log_type'] == 'OUT']['Timestamp'].max()
 
-            working_hours = 0
             status = "Absent"
 
             if pd.notna(check_in) and pd.notna(check_out):
 
                 duration = (check_out - check_in).total_seconds() / 3600
-                duration = max(0, duration - 1)  # lunch deduction
-                working_hours = round(duration, 2)
+                duration = max(0, duration - 1)
 
-                if working_hours >= 7.5:
+                if duration >= 8:
                     status = "Full Day"
-                elif working_hours >= 3.5:
+                elif duration >= 4:
                     status = "Half Day"
                 else:
                     status = "Absent"
@@ -204,22 +240,14 @@ with tab4:
             'Date','Name','EmployeeID','Status'
         ])
 
-        # ------------------------------
-        # STEP 2: CONVERT TO NUMERIC VALUE
-        # ------------------------------
         def status_to_value(x):
             if x == "Full Day":
                 return 1
             elif x == "Half Day":
                 return 0.5
-            else:
-                return 0
+            return 0
 
         report['Value'] = report['Status'].apply(status_to_value)
-
-        # ------------------------------
-        # STEP 3: MONTHLY SUMMARY
-        # ------------------------------
         report['Month'] = pd.to_datetime(report['Date']).dt.to_period('M')
 
         monthly_report = report.groupby(
@@ -228,9 +256,6 @@ with tab4:
 
         st.dataframe(monthly_report)
 
-        # ------------------------------
-        # DOWNLOAD
-        # ------------------------------
         st.download_button(
             "⬇️ Download Monthly Report",
             monthly_report.to_csv(index=False),
