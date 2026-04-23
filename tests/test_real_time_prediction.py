@@ -24,5 +24,5 @@ def test_face_prediction(real_time_pred):
     fake_image = np.zeros((100, 100, 3), dtype=np.uint8)
     fake_df = MagicMock()
     
-    processed_image = real_time_pred.face_prediction(fake_image, fake_df, 'facial_features', ['Name', 'Role'], 0.5)
+    processed_image = real_time_pred.face_prediction(fake_image, fake_df, 'facial_features', ['Name', 'Role'], 0.67)
     assert isinstance(processed_image, np.ndarray)

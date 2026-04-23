@@ -16,7 +16,7 @@ def fake_dataframe():
 
 def test_ml_search_algorithm(fake_dataframe):
     test_vector = np.random.rand(512)
-    name, role = ml_search_algorithm(fake_dataframe, "facial_features", test_vector, ["Name", "Role"], 0.5)
+    name, role = ml_search_algorithm(fake_dataframe, "facial_features", test_vector, ["Name", "Role"], 0.67)
 
     assert isinstance(name, str)
     assert isinstance(role, str)

@@ -42,7 +42,7 @@ if "last_capture_time" not in st.session_state:
 # CONFIG
 # -------------------------
 CAPTURE_INTERVAL = 1.5   # seconds
-MAX_SAMPLES = 5
+MAX_SAMPLES = 3
 
 # -------------------------
 # TITLE

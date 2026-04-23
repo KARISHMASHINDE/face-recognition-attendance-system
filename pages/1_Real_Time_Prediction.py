@@ -85,7 +85,7 @@ def video_frame_callback(frame):
             face_db,
             "facial_features",
             ["Name", "EmployeeID"],
-            0.5
+            0.7
         )
 
         # ✅ STORE INSIDE OBJECT (SAFE)
@@ -93,7 +93,7 @@ def video_frame_callback(frame):
             realtimepred.latest_event = event
 
     except Exception as e:
-        print("[ERROR]", e)
+        #print("[ERROR]", e)
         pred_img = img
 
     return av.VideoFrame.from_ndarray(pred_img, format="bgr24")
