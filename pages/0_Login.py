@@ -86,7 +86,7 @@ with col2:
     # -------------------------
     # LOGIN BUTTON
     # -------------------------
-    if st.button("Login", use_container_width=True):
+    if st.button("Login", width='stretch'):
 
         # BRUTE FORCE PROTECTION
         if st.session_state.login_attempts >= MAX_ATTEMPTS:

@@ -219,7 +219,7 @@ with tab1:
     if users_df.empty:
         st.warning("No registered users found")
     else:
-        st.dataframe(users_df, use_container_width=True)
+        st.dataframe(users_df, width='stretch')
 
         st.download_button(
             "⬇️ Download Users",
@@ -239,7 +239,7 @@ with tab2:
     else:
         st.dataframe(
             filtered_logs,
-            use_container_width=True
+            width='stretch'
         )
 
         st.download_button(
@@ -321,7 +321,7 @@ with tab3:
 
         st.dataframe(
             daily_report,
-            use_container_width=True
+            width='stretch'
         )
 
         st.download_button(
@@ -436,7 +436,7 @@ with tab4:
 
         st.dataframe(
             monthly_report,
-            use_container_width=True
+            width='stretch'
         )
 
         st.download_button(
