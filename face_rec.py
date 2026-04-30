@@ -17,7 +17,6 @@ db_config = {
     "password": "karishma123",
 }
 
-# Global pool to prevent connection overhead
 db_pool = None
 
 def get_db_pool(db_name):
@@ -34,7 +33,6 @@ def get_db_pool(db_name):
 # ==========================================
 # 2. MODEL LOAD
 # ==========================================
-# Pre-load the model globally
 faceapp = FaceAnalysis(name='buffalo_sc', root='insightface_model')
 faceapp.prepare(ctx_id=-1, det_size=(640, 640))
 
@@ -44,7 +42,7 @@ def retrive_data(db_name):
     cursor = conn.cursor()
     cursor.execute("SELECT employee_name, employee_id, face_embedding FROM employee_face_data")
     rows = cursor.fetchall()
-    conn.close() # Return to pool
+    conn.close() 
     
     data = []
     for name, emp_id, emb in rows:
@@ -53,7 +51,6 @@ def retrive_data(db_name):
             data.append([name, emp_id, feature])
     
     df = pd.DataFrame(data, columns=['Name', 'EmployeeID', 'facial_features'])
-    # Pre-stack features for lightning-fast search
     if not df.empty:
         df['stacked_features'] = list(np.vstack(df['facial_features'].values))
     return df
@@ -61,8 +58,8 @@ def retrive_data(db_name):
 class RealTimePred:
     def __init__(self, db_name):
         self.db_name = db_name
-        self.min_repeat_gap = 5 # Seconds between same-person scans
-        self.min_out_gap = 60    # Minimum time between IN and OUT
+        self.min_repeat_gap = 5 
+        self.min_out_gap = 10    # Shortened for testing/flexibility
         self.last_seen_time = {}
         self.blink_counter = {}
         self.blink_verified = {}
@@ -72,21 +69,16 @@ class RealTimePred:
         if landmarks is None or len(landmarks) < 2:
             return False
         left_eye, right_eye = landmarks[0], landmarks[1]
-        
-        # Calculate Eye Aspect Ratio (Simplified for 5-point KPS)
         eye_distance = np.linalg.norm(left_eye - right_eye)
-        # Vertical height is harder with 5-points; we use a fixed threshold on eye height movement
-        # Here we use the ratio logic you provided but optimized
         eye_height = abs(left_eye[1] - right_eye[1]) 
         ratio = eye_height / (eye_distance + 1e-6)
 
         if emp_id not in self.blink_counter: self.blink_counter[emp_id] = 0
-
         if ratio < 0.15:
             self.blink_counter[emp_id] += 1
             return False
         else:
-            if self.blink_counter[emp_id] >= 1: # Lowered to 1 for faster detection in WebRTC
+            if self.blink_counter[emp_id] >= 1:
                 self.blink_counter[emp_id] = 0
                 return True
             self.blink_counter[emp_id] = 0
@@ -96,34 +88,56 @@ class RealTimePred:
         conn = self.db_pool.get_connection()
         cursor = conn.cursor()
         try:
+            # Get the very last log for today to determine the next step
             cursor.execute("""
-                SELECT log_type, attendance_time FROM employee_daily_attendance
-                WHERE employee_id=%s AND attendance_date=CURDATE()
+                SELECT log_type, attendance_time FROM employee_daily_attendance 
+                WHERE employee_id=%s AND attendance_date=CURDATE() 
                 ORDER BY attendance_time DESC LIMIT 1
             """, (emp_id,))
             result = cursor.fetchone()
             
-            log_type = "IN"
+            log_type = "IN" 
             duration_str = None
 
             if result:
                 last_type, last_time = result
-                # Handle various time formats from MySQL
+                # Consistency in time formatting
                 if isinstance(last_time, str):
                     last_time = datetime.strptime(last_time, "%Y-%m-%d %H:%M:%S")
-                elif hasattr(last_time, 'seconds'):
+                elif hasattr(last_time, 'total_seconds'): # Handle timedelta
                     last_time = datetime.combine(datetime.today(), (datetime.min + last_time).time())
 
                 diff_sec = (datetime.now() - last_time).total_seconds()
+                if diff_sec < self.min_out_gap: return None 
 
+                # Toggle Logic: If last was IN, now OUT. If last was OUT, now IN.
                 if last_type == "IN":
-                    if diff_sec < self.min_out_gap: return None
                     log_type = "OUT"
-                    hrs, rem = divmod(int(diff_sec), 3600)
+                    
+                    # Calculate cumulative time for the day
+                    cursor.execute("""
+                        SELECT log_type, attendance_time FROM employee_daily_attendance 
+                        WHERE employee_id=%s AND attendance_date=CURDATE() 
+                        ORDER BY attendance_time ASC
+                    """, (emp_id,))
+                    all_logs = cursor.fetchall()
+                    
+                    total_seconds = 0
+                    temp_in = None
+                    for l_type, l_time in all_logs:
+                        if l_type == "IN":
+                            temp_in = l_time
+                        elif l_type == "OUT" and temp_in:
+                            total_seconds += (l_time - temp_in).total_seconds()
+                            temp_in = None
+                    
+                    # Add current session
+                    total_seconds += diff_sec
+                    hrs, rem = divmod(int(total_seconds), 3600)
                     mins = rem // 60
                     duration_str = f"{hrs}h {mins}m"
                 else:
-                    return name, "DONE", None
+                    log_type = "IN"
 
             cursor.execute("""
                 INSERT INTO employee_daily_attendance 
@@ -137,16 +151,12 @@ class RealTimePred:
 
     def face_prediction(self, img, df, col, roles, thresh):
         if df.empty: return img, False, None
-        
         results = faceapp.get(img)
         if not results: return img, False, None
 
-        # PRODUCTION FIX: Process only the largest face (the person in front)
         main_face = max(results, key=lambda x: (x.bbox[2]-x.bbox[0]) * (x.bbox[3]-x.bbox[1]))
-        
         bbox, emb, landmarks = main_face.bbox.astype(int), main_face.embedding, main_face.kps
         
-        # Optimized Matrix Search
         X = np.array(df['stacked_features'].tolist())
         sim = pairwise.cosine_similarity(X, emb.reshape(1, -1)).flatten()
         
@@ -157,15 +167,12 @@ class RealTimePred:
 
         event = None
         if name != "Unknown":
-            # Check Blink
             if self.is_blinking(emp_id, landmarks):
                 self.blink_verified[emp_id] = time.time()
 
-            # Process attendance if blink verified in last 3 seconds
             if emp_id in self.blink_verified and (time.time() - self.blink_verified[emp_id] <= 3):
                 cv2.putText(img, "VERIFIED", (bbox[0], bbox[1]-40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
                 now_ts = datetime.now()
-                # Cooldown check
                 last_seen = self.last_seen_time.get(emp_id, 0)
                 if (time.time() - last_seen) > self.min_repeat_gap:
                     event = self.saveLogs_mysql(name, emp_id, now_ts.strftime("%Y-%m-%d %H:%M:%S"))
