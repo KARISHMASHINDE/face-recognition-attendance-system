@@ -14,21 +14,26 @@ import time
 db_config = {
     "host": "127.0.0.1",
     "user": "root",
-    "password": "karishma123",
+    "password": "Zeeshan@123",
 }
 
 db_pool = None
 
 def get_db_pool(db_name):
     global db_pool
-    if db_pool is None:
-        db_pool = mysql.connector.pooling.MySQLConnectionPool(
-            pool_name="attendance_pool",
-            pool_size=10,
-            database=db_name,
-            **db_config
-        )
-    return db_pool
+    try:
+        if db_pool is None:
+            db_pool = mysql.connector.pooling.MySQLConnectionPool(
+                pool_name="attendance_pool",
+                pool_size=10,
+                database=db_name,
+                **db_config
+            )
+        return db_pool
+    except mysql.connector.Error as e:
+        # This handles the case where MySQL is stopped during startup
+        print(f"Error creating pool: {e}")
+        return None
 
 # ==========================================
 # 2. MODEL LOAD
@@ -42,6 +47,7 @@ def retrive_data(db_name):
     cursor = conn.cursor()
     cursor.execute("SELECT employee_name, employee_id, face_embedding FROM employee_face_data")
     rows = cursor.fetchall()
+    cursor.close()
     conn.close() 
     
     data = []
@@ -59,7 +65,7 @@ class RealTimePred:
     def __init__(self, db_name):
         self.db_name = db_name
         self.min_repeat_gap = 5 
-        self.min_out_gap = 10    # Shortened for testing/flexibility
+        self.min_out_gap = 60   # Shortened for testing/flexibility
         self.last_seen_time = {}
         self.blink_counter = {}
         self.blink_verified = {}
@@ -147,6 +153,7 @@ class RealTimePred:
             conn.commit()
             return name, log_type, duration_str
         finally:
+            cursor.close()
             conn.close()
 
     def face_prediction(self, img, df, col, roles, thresh):

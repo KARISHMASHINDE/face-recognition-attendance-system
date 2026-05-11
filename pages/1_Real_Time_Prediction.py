@@ -46,6 +46,9 @@ def load_model(db_name):
     return face_rec.RealTimePred(db_name)
 
 face_db = load_face_db(st.session_state.db_name)
+if face_db is None or face_db.empty:
+    st.error("Could not load face database. Check MySQL connection.")
+    st.stop()
 realtimepred = load_model(st.session_state.db_name)
 
 # --- UI ELEMENTS ---

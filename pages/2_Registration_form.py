@@ -58,6 +58,7 @@ def fetch_employee_from_db(emp_id):
         return None
     finally:
         if conn and conn.is_connected():
+            cursor.close()
             conn.close()
 
 def check_existing_biometrics(emp_id):
@@ -69,6 +70,7 @@ def check_existing_biometrics(emp_id):
         return cursor.fetchone() is not None
     finally:
         if conn and conn.is_connected():
+            cursor.close()
             conn.close()
 
 @st.cache_data(ttl=60) # Cache for 60 seconds to reduce DB load
@@ -84,6 +86,7 @@ def get_all_registered_embeddings():
         return []
     finally:
         if conn and conn.is_connected():
+            cursor.close()
             conn.close()
 
 # -------------------------
@@ -193,6 +196,7 @@ if valid_id:
                 st.error("Database Save Error. Contact administrator.")
             finally:
                 if conn and conn.is_connected():
+                    cursor.close()
                     conn.close()
 else:
     st.info("👋 Awaiting valid Employee ID to begin enrollment.")

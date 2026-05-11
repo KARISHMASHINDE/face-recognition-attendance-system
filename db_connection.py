@@ -9,6 +9,6 @@ def get_mysql_connection():
     return mysql.connector.connect(
         host="127.0.0.1",
         user="root",
-        password="karishma123",
+        password="Zeeshan@123",
         database=st.session_state.db_name   # ✅ dynamic DB
     )

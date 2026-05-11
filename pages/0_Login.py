@@ -45,7 +45,7 @@ with col2:
 
     # INPUTS
     ref = st.text_input("Ashram Code")
-    role = st.selectbox("Select Role", ["system","office","store","super"])
+    role = st.selectbox("Select Role", ["attendance"])
     password = st.text_input("Password", type="password")
 
     # -------------------------
@@ -56,7 +56,7 @@ with col2:
             conn = mysql.connector.connect(
                 host="127.0.0.1",
                 user="root",
-                password="karishma123",
+                password="Zeeshan@123",
                 database="loginpath"
             )
 
@@ -69,6 +69,7 @@ with col2:
             """, (ref, role))
 
             result = cursor.fetchone()
+            cursor.close()
             conn.close()
 
             if result:

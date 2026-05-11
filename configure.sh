@@ -1,12 +1,12 @@
 echo "
   <VirtualHost *:80>
-      ServerName 13.51.206.244
-      Redirect / https://13.51.206.244
+      ServerName 52.168.179.101
+      Redirect / https://52.168.179.101
   </VirtualHost> 
       
   <VirtualHost  *:443>
       
-      ServerName 13.51.206.244
+      ServerName 52.168.179.101
       SSLEngine on
       SSLProxyEngine On
       SSLCertificateFile      /etc/ssl/certs/ssl-cert-snakeoil.pem
@@ -25,6 +25,6 @@ echo "
       
       # The order is important here
       ProxyPass         /        http://localhost:8501/
-      ProxyPassReverse  /        http://localhost:8501/
+      ProxyPassReverse  /        http://localhost:/
       
   </VirtualHost>" > /etc/apache2/sites-available/deploy_attendance_app.conf
