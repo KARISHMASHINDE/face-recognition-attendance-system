@@ -1,3 +1,4 @@
+import streamlit as st
 import numpy as np
 import pandas as pd
 import cv2
@@ -14,7 +15,7 @@ import time
 db_config = {
     "host": "127.0.0.1",
     "user": "root",
-    "password": "Zeeshan@123",
+    "password": "karishma123",
 }
 
 db_pool = None
@@ -22,19 +23,18 @@ db_pool = None
 def get_db_pool(db_name):
     global db_pool
     try:
+        # If pool exists but for a different database, we must reset it or handle it
         if db_pool is None:
             db_pool = mysql.connector.pooling.MySQLConnectionPool(
                 pool_name="attendance_pool",
-                pool_size=10,
+                pool_size=10, # Increase this if many users are logging in
                 database=db_name,
                 **db_config
             )
         return db_pool
     except mysql.connector.Error as e:
-        # This handles the case where MySQL is stopped during startup
-        print(f"Error creating pool: {e}")
+        st.error(f"Failed to connect to MySQL: {e}")
         return None
-
 # ==========================================
 # 2. MODEL LOAD
 # ==========================================

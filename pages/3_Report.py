@@ -187,7 +187,8 @@ with tab3:
             if val == "Half Day": return 'background-color: #fff3cd; color: #856404'
             return 'background-color: #f8d7da; color: #721c24'
 
-        st.dataframe(daily_df.style.applymap(style_status, subset=['Status']), use_container_width=True)
+        #st.dataframe(daily_df.style.applymap(style_status, subset=['Status']), use_container_width=True)
+        st.dataframe(daily_df.style.applymap(style_status, subset=['Status']), width="stretch")
 
 with tab4:
     st.subheader("Monthly Attendance Statistics")
